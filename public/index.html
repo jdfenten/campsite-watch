@@ -252,6 +252,7 @@ async function loadWatches() {
         <td class="topic">${w.ntfyTopic}</td>
         <td><button class="danger" data-id="${w.id}" data-action="delete">Remove</button></td>
       </tr>`
+    )
     .join("");
   tbody.querySelectorAll('button[data-action="delete"]').forEach((btn) => {
     btn.addEventListener("click", async () => {
