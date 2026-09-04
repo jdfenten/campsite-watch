@@ -63,8 +63,8 @@ function buildFormBody(csrfToken: string, pwFromDate: string) {
 }
 
 function extractCsrfToken(html: string): string | null {
-  const m = html.match(/name=["']csrfToken["']\s+value=["']([^"']+)["']/);
-  return m ? m[1] : null;
+  const m = html.match(/name=["']csrfToken["'][^>]*\svalue=["']([^"']+)["']/i);
+return m ? m[1] : null;
 }
 
 function extractSessionCookie(setCookieHeaders: string[]): string {
