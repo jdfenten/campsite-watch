@@ -15,8 +15,8 @@ export default async () => {
 
   await fetch(NTFY_URL, {
     method: "POST",
-    headers: { title: "Campsite Watch — test", priority: "default", tags: "white_check_mark" },
-    body: "If you got this, your campsite-watch notifications are wired up correctly.",
+    headers: { title: "Campsite Watch - test", priority: "default", tags: "white_check_mark" },
+body: "If you got this, your campsite-watch notifications are wired up correctly.",
   });
 
   return new Response(`Sent a test notification to ${NTFY_URL}`);
