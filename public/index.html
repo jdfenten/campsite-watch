@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Campsite Watch</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e7e9ee;
+    --muted: #9aa1ad;
+    --accent: #4fb286;
+    --accent-dim: #35664f;
+    --danger: #c1554d;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    padding: 2rem 1.25rem 4rem;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  h1 { font-size: 1.5rem; margin: 0 0 .25rem; }
+  .sub { color: var(--muted); margin: 0 0 2rem; font-size: .95rem; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 { font-size: 1.1rem; margin: 0 0 1rem; }
+  label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: .25rem; }
+  input, select {
+    width: 100%;
+    background: #0f1115;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: .5rem .6rem;
+    font-size: .9rem;
+  }
+  .row { display: flex; gap: .75rem; flex-wrap: wrap; margin-bottom: .75rem; }
+  .row > div { flex: 1; min-width: 140px; }
+  button {
+    background: var(--accent);
+    color: #08130e;
+    border: none;
+    border-radius: 8px;
+    padding: .55rem 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: .9rem;
+  }
+  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.danger { background: transparent; border: 1px solid var(--danger); color: var(--danger); }
+  button:disabled { opacity: .5; cursor: default; }
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+  th, td { text-align: left; padding: .5rem .4rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; }
+  .empty { color: var(--muted); font-size: .88rem; padding: .5rem 0; }
+  .topic { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; color: var(--accent); }
+  .lines { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; line-height: 1.5; }
+  .status { font-size: .85rem; color: var(--muted); margin-top: .5rem; min-height: 1.2em; }
+  .status.err { color: var(--danger); }
+  .status.ok { color: var(--accent); }
+  details summary { cursor: pointer; color: var(--accent); font-size: .85rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Campsite Watch</h1>
+  <p class="sub">Monitoring South Carolina State Parks camping availability. Notifications go out via <a href="https://ntfy.sh" style="color:var(--accent)">ntfy.sh</a>.</p>
+
+  <section>
+    <h2>Active watches</h2>
+    <table id="watchesTable">
+      <thead><tr><th>Park</th><th>Dates</th><th>ntfy topic</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="empty" id="watchesEmpty" hidden>No watches yet — add one below.</div>
+
+    <h2 style="margin-top:1.5rem;">Add a watch</h2>
+    <div class="row">
+      <div>
+        <label for="parkSelect">Park</label>
+        <select id="parkSelect"></select>
+      </div>
+      <div>
+        <label for="startDate">Start date</label>
+        <input type="date" id="startDate" />
+      </div>
+      <div>
+        <label for="endDate">End date</label>
+        <input type="date" id="endDate" />
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="topicInput">ntfy topic (optional — auto-generated if blank)</label>
+        <input type="text" id="topicInput" placeholder="e.g. joe-table-rock-abcd1234" />
+      </div>
+    </div>
+    <button id="addWatchBtn">Add watch</button>
+    <div class="status" id="addWatchStatus"></div>
+  </section>
+
+  <section>
+    <h2>Check availability now</h2>
+    <p class="sub" style="margin-bottom:1rem;">Live search — doesn't affect any watch or send a notification.</p>
+    <div class="row">
+      <div>
+        <label for="searchPark">Park</label>
+        <select id="searchPark"></select>
+      </div>
+      <div>
+        <label for="searchStart">Start date</label>
+        <input type="date" id="searchStart" />
+      </div>
+      <div>
+        <label for="searchEnd">End date</label>
+        <input type="date" id="searchEnd" />
+      </div>
+      <div>
+        <label for="searchType">Site type contains (optional)</label>
+        <input type="text" id="searchType" placeholder="e.g. tent, rv, cabin" />
+      </div>
+    </div>
+    <button id="searchBtn">Search</button>
+    <div class="status" id="searchStatus"></div>
+    <div class="lines" id="searchResults" style="margin-top:1rem;"></div>
+  </section>
+
+  <section>
+    <h2>Notification log</h2>
+    <p class="sub" style="margin-bottom:1rem;">What's actually been sent — the checks-and-balance.</p>
+    <table id="logTable">
+      <thead><tr><th>Sent</th><th>Park</th><th>Range</th><th>New</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div class="empty" id="logEmpty" hidden>No notifications sent yet.</div>
+  </section>
+</div>
+
+<script>
+const API = ""; // same-origin
+
+async function api(path, opts) {
+  const res = await fetch(`/.netlify/functions/${path}`, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+function fmtRange(w) {
+  return `${w.rangeStart} → ${w.rangeEnd}`;
+}
+
+let parks = [];
+
+async function loadParks() {
+  parks = await api("api-parks");
+  const opts = parks
+    .map((p) => `<option value="${p.slug}">${p.name}</option>`)
+    .join("");
+  document.getElementById("parkSelect").innerHTML = opts;
+  document.getElementById("searchPark").innerHTML = opts;
+}
+
+async function loadWatches() {
+  const watches = await api("api-watches");
+  const tbody = document.querySelector("#watchesTable tbody");
+  const empty = document.getElementById("watchesEmpty");
+  if (watches.length === 0) {
+    tbody.innerHTML = "";
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  tbody.innerHTML = watches
+    .map(
+      (w) => `<tr>
+        <td>${w.parkName}</td>
+        <td>${fmtRange(w)}</td>
+        <td class="topic">${w.ntfyTopic}</td>
+        <td><button class="danger" data-id="${w.id}" data-action="delete">Remove</button></td>
+      </tr>`
+    )
+    .join("");
+  tbody.querySelectorAll('button[data-action="delete"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      btn.disabled = true;
+      await api(`api-watches?id=${encodeURIComponent(btn.dataset.id)}`, { method: "DELETE" });
+      loadWatches();
+    });
+  });
+}
+
+async function loadLog() {
+  const entries = await api("api-notifications");
+  const tbody = document.querySelector("#logTable tbody");
+  const empty = document.getElementById("logEmpty");
+  if (entries.length === 0) {
+    tbody.innerHTML = "";
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+  tbody.innerHTML = entries
+    .map(
+      (e) => `<tr>
+        <td>${new Date(e.sentAt).toLocaleString()}</td>
+        <td>${e.parkName}</td>
+        <td>${e.rangeStart} → ${e.rangeEnd}</td>
+        <td>
+          <details>
+            <summary>${e.newCount}</summary>
+            <div class="lines">${(e.lines || []).join("\\n")}</div>
+          </details>
+        </td>
+      </tr>`
+    )
+    .join("");
+}
+
+document.getElementById("addWatchBtn").addEventListener("click", async () => {
+  const status = document.getElementById("addWatchStatus");
+  const parkSlug = document.getElementById("parkSelect").value;
+  const rangeStart = document.getElementById("startDate").value;
+  const rangeEnd = document.getElementById("endDate").value;
+  const ntfyTopic = document.getElementById("topicInput").value.trim() || undefined;
+  if (!parkSlug || !rangeStart || !rangeEnd) {
+    status.textContent = "Pick a park and both dates.";
+    status.className = "status err";
+    return;
+  }
+  status.textContent = "Adding…";
+  status.className = "status";
+  try {
+    const watch = await api("api-watches", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ parkSlug, rangeStart, rangeEnd, ntfyTopic }),
+    });
+    status.textContent = `Added. Subscribe on ntfy.sh to topic: ${watch.ntfyTopic}`;
+    status.className = "status ok";
+    document.getElementById("topicInput").value = "";
+    loadWatches();
+  } catch (err) {
+    status.textContent = err.message;
+    status.className = "status err";
+  }
+});
+
+document.getElementById("searchBtn").addEventListener("click", async () => {
+  const status = document.getElementById("searchStatus");
+  const results = document.getElementById("searchResults");
+  const parkSlug = document.getElementById("searchPark").value;
+  const start = document.getElementById("searchStart").value;
+  const end = document.getElementById("searchEnd").value;
+  const type = document.getElementById("searchType").value.trim();
+  if (!parkSlug || !start || !end) {
+    status.textContent = "Pick a park and both dates.";
+    status.className = "status err";
+    return;
+  }
+  status.textContent = "Searching… this can take a few seconds.";
+  status.className = "status";
+  results.textContent = "";
+  try {
+    const qs = new URLSearchParams({ parkSlug, start, end });
+    if (type) qs.set("type", type);
+    const data = await api(`api-availability?${qs.toString()}`);
+    status.textContent = `${data.count} open night(s) found.`;
+    status.className = "status ok";
+    results.textContent = data.lines.length ? data.lines.join("\\n") : "Nothing open in that range.";
+  } catch (err) {
+    status.textContent = err.message;
+    status.className = "status err";
+  }
+});
+
+loadParks().then(loadWatches);
+loadLog();
+</script>
+</body>
+</html>
