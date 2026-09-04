@@ -65,7 +65,25 @@
   th { color: var(--muted); font-weight: 500; font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; }
   .empty { color: var(--muted); font-size: .88rem; padding: .5rem 0; }
   .topic { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; color: var(--accent); }
-  .lines { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; line-height: 1.5; }
+  .lines { display: flex; flex-direction: column; }
+  .slot-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: .25rem .75rem;
+    padding: .5rem .25rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .slot-line:last-child { border-bottom: none; }
+  .slot-date {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: .85rem;
+    font-weight: 600;
+    color: var(--accent);
+    min-width: 6.5rem;
+    flex-shrink: 0;
+  }
+  .slot-sites { font-size: .88rem; color: var(--text); line-height: 1.5; }
   .status { font-size: .85rem; color: var(--muted); margin-top: .5rem; min-height: 1.2em; }
   .status.err { color: var(--danger); }
   .status.ok { color: var(--accent); }
@@ -161,6 +179,23 @@ function fmtRange(w) {
   return `${w.rangeStart} → ${w.rangeEnd}`;
 }
 
+// Formats "MM/DD/YYYY: Site A ($12), Site B ($14)" lines into a readable
+// row per date instead of one dense wall of text separated by literal \n.
+function renderSlotLines(lines) {
+  if (!lines || !lines.length) {
+    return `<div class="empty">Nothing open in that range.</div>`;
+  }
+  return lines
+    .map((line) => {
+      const idx = line.indexOf(": ");
+      if (idx === -1) return `<div class="slot-line"><span class="slot-sites">${line}</span></div>`;
+      const date = line.slice(0, idx);
+      const sites = line.slice(idx + 2);
+      return `<div class="slot-line"><span class="slot-date">${date}</span><span class="slot-sites">${sites}</span></div>`;
+    })
+    .join("");
+}
+
 let parks = [];
 
 async function loadParks() {
@@ -225,7 +260,7 @@ async function loadLog() {
         <td>
           <details>
             <summary>${e.newCount}</summary>
-            <div class="lines">${(e.lines || []).join("\\n")}</div>
+            <div class="lines">${renderSlotLines(e.lines)}</div>
           </details>
         </td>
       </tr>`
@@ -276,14 +311,14 @@ document.getElementById("searchBtn").addEventListener("click", async () => {
   }
   status.textContent = "Searching… this can take a few seconds.";
   status.className = "status";
-  results.textContent = "";
+  results.innerHTML = "";
   try {
     const qs = new URLSearchParams({ parkSlug, start, end });
     if (type) qs.set("type", type);
     const data = await api(`api-availability?${qs.toString()}`);
     status.textContent = `${data.count} open night(s) found.`;
     status.className = "status ok";
-    results.textContent = data.lines.length ? data.lines.join("\\n") : "Nothing open in that range.";
+    results.innerHTML = renderSlotLines(data.lines);
   } catch (err) {
     status.textContent = err.message;
     status.className = "status err";
