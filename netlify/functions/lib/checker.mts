@@ -137,9 +137,48 @@ function withinRange(dateMMDDYYYY: string, startISO: string, endISO: string): bo
   return iso >= startISO && iso <= endISO;
 }
 
+function toIso(dateMMDDYYYY: string): string {
+  const [mm, dd, yyyy] = dateMMDDYYYY.split("/");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+// Most SC state park sites have a 2-night minimum stay, so a single isolated
+// open night isn't actually bookable. Keep only slots where the site also
+// has the following (minNights - 1) night(s) open too — i.e. dates that
+// could actually start a `minNights`-night stay.
+const MIN_STAY_NIGHTS = 2;
+
+function filterMinStay(slots: Slot[], minNights: number): Slot[] {
+  const bySite = new Map<string, Set<string>>();
+  for (const s of slots) {
+    if (!bySite.has(s.site)) bySite.set(s.site, new Set());
+    bySite.get(s.site)!.add(toIso(s.date));
+  }
+  return slots.filter((s) => {
+    const dates = bySite.get(s.site)!;
+    const start = new Date(toIso(s.date) + "T00:00:00Z");
+    for (let i = 0; i < minNights; i++) {
+      const iso = new Date(start.getTime() + i * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      if (!dates.has(iso)) return false;
+    }
+    return true;
+  });
+}
+
+// Joe only wants the sites right on Lake Jocassee at Devils Fork for now
+// (per the campground map: 34, 35, 37, 39, 40, 41). Other parks aren't
+// restricted — this list only applies when it has an entry for the park.
+const WATERFRONT_SITES: Record<string, Set<string>> = {
+  "devils-fork": new Set(
+    ["34", "35", "37", "39", "40", "41"].map((n) => `Campsite ${n}`)
+  ),
+};
+
 // Fetches every open night for `parkSlug` between startISO and endISO
-// (inclusive), regardless of any previously-seen state. Used both by the
-// watch/notify flow and by the on-demand availability search.
+// (inclusive) that's actually usable: filtered to a park's site whitelist
+// (if one is configured) and to dates that can start a MIN_STAY_NIGHTS-night
+// stay. Used both by the watch/notify flow and by the on-demand availability
+// search.
 export async function fetchAvailability(
   parkSlug: string,
   parkId: string,
@@ -170,7 +209,10 @@ export async function fetchAvailability(
     }
   });
 
-  return allSlots;
+  const siteFilter = WATERFRONT_SITES[parkSlug];
+  const filtered = siteFilter ? allSlots.filter((s) => siteFilter.has(s.site)) : allSlots;
+
+  return filterMinStay(filtered, MIN_STAY_NIGHTS);
 }
 
 // Formats slots the way Joe wants to read them: one line per date, e.g.
