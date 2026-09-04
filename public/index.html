@@ -73,8 +73,13 @@
     gap: .25rem .75rem;
     padding: .5rem .25rem;
     border-bottom: 1px solid var(--border);
+    text-decoration: none;
+    color: inherit;
   }
   .slot-line:last-child { border-bottom: none; }
+  a.slot-line { cursor: pointer; }
+  a.slot-line:hover { background: rgba(79, 178, 134, 0.08); }
+  a.slot-line:hover .slot-sites { text-decoration: underline; }
   .slot-date {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: .85rem;
@@ -84,6 +89,7 @@
     flex-shrink: 0;
   }
   .slot-sites { font-size: .88rem; color: var(--text); line-height: 1.5; }
+  .slot-hint { color: var(--muted); font-size: .8rem; margin: .5rem .25rem 0; }
   .status { font-size: .85rem; color: var(--muted); margin-top: .5rem; min-height: 1.2em; }
   .status.err { color: var(--danger); }
   .status.ok { color: var(--accent); }
@@ -179,21 +185,37 @@ function fmtRange(w) {
   return `${w.rangeStart} → ${w.rangeEnd}`;
 }
 
+// The SC Parks reservation flow is entirely session/POST-driven — it
+// ignores query-string params, so there's no way to deep-link straight to
+// a specific site or date. The best we can do is send you to that park's
+// booking start page so you can pick the date/site yourself from there.
+function bookingUrlFor(parkSlug) {
+  return `https://reserve.southcarolinaparks.com/${parkSlug}/camping/`;
+}
+
 // Formats "MM/DD/YYYY: Site A ($12), Site B ($14)" lines into a readable
 // row per date instead of one dense wall of text separated by literal \n.
-function renderSlotLines(lines) {
+// Each row links out to the park's booking page when parkSlug is known.
+function renderSlotLines(lines, parkSlug) {
   if (!lines || !lines.length) {
     return `<div class="empty">Nothing open in that range.</div>`;
   }
-  return lines
+  const href = parkSlug ? bookingUrlFor(parkSlug) : null;
+  const tag = href ? "a" : "div";
+  const attrs = href ? ` href="${href}" target="_blank" rel="noopener"` : "";
+  const rows = lines
     .map((line) => {
       const idx = line.indexOf(": ");
-      if (idx === -1) return `<div class="slot-line"><span class="slot-sites">${line}</span></div>`;
+      if (idx === -1) return `<${tag} class="slot-line"${attrs}><span class="slot-sites">${line}</span></${tag}>`;
       const date = line.slice(0, idx);
       const sites = line.slice(idx + 2);
-      return `<div class="slot-line"><span class="slot-date">${date}</span><span class="slot-sites">${sites}</span></div>`;
+      return `<${tag} class="slot-line"${attrs}><span class="slot-date">${date}</span><span class="slot-sites">${sites}</span></${tag}>`;
     })
     .join("");
+  const hint = href
+    ? `<div class="slot-hint">Click a row to open the SC Parks booking page for this park — you'll pick the date and site there; direct links to a specific site aren't supported.</div>`
+    : "";
+  return rows + hint;
 }
 
 let parks = [];
@@ -230,7 +252,6 @@ async function loadWatches() {
         <td class="topic">${w.ntfyTopic}</td>
         <td><button class="danger" data-id="${w.id}" data-action="delete">Remove</button></td>
       </tr>`
-    )
     .join("");
   tbody.querySelectorAll('button[data-action="delete"]').forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -260,7 +281,7 @@ async function loadLog() {
         <td>
           <details>
             <summary>${e.newCount}</summary>
-            <div class="lines">${renderSlotLines(e.lines)}</div>
+            <div class="lines">${renderSlotLines(e.lines, e.parkSlug)}</div>
           </details>
         </td>
       </tr>`
@@ -318,7 +339,7 @@ document.getElementById("searchBtn").addEventListener("click", async () => {
     const data = await api(`api-availability?${qs.toString()}`);
     status.textContent = `${data.count} open night(s) found.`;
     status.className = "status ok";
-    results.innerHTML = renderSlotLines(data.lines);
+    results.innerHTML = renderSlotLines(data.lines, parkSlug);
   } catch (err) {
     status.textContent = err.message;
     status.className = "status err";
