@@ -1,0 +1,12 @@
+{
+    "name": "campsite-watch",
+    "version": "1.0.0",
+    "private": true,
+    "description": "Monitors Devils Fork State Park (SC) campsite availability and pushes a notification via ntfy.sh when a new opening appears.",
+    "type": "module",
+    "dependencies": {
+          "@netlify/blobs": "^8.1.0",
+          "@netlify/functions": "^3.0.0",
+          "cheerio": "^1.0.0"
+    }
+}
