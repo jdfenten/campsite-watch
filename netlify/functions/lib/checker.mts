@@ -1,26 +1,22 @@
 import { getStore } from "@netlify/blobs";
 import * as cheerio from "cheerio";
+import { findPark } from "./parks.mts";
 
 declare const Netlify: { env: { get(key: string): string | undefined } };
 
-// ---- Config (env vars, with sane defaults for Devils Fork / October 2026) ----
-const PARK_SLUG = Netlify.env.get("PARK_SLUG") || "devils-fork";
-const PARK_ID = Netlify.env.get("PARK_ID") || "12";
-const RANGE_START = Netlify.env.get("RANGE_START") || "2026-10-01"; // YYYY-MM-DD
-const RANGE_END = Netlify.env.get("RANGE_END") || "2026-10-31"; // YYYY-MM-DD, inclusive
-const NTFY_TOPIC = Netlify.env.get("NTFY_TOPIC"); // e.g. "joe-devils-fork-abc123"
-const NTFY_URL = Netlify.env.get("NTFY_URL") || (NTFY_TOPIC ? `https://ntfy.sh/${NTFY_TOPIC}` : undefined);
-
-const BASE_URL = `https://reserve.southcarolinaparks.com/${PARK_SLUG}/camping/`;
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+
+function baseUrlFor(parkSlug: string): string {
+  return `https://reserve.southcarolinaparks.com/${parkSlug}/camping/`;
+}
 
 // The exact hidden-field payload the site's own form submits for a
 // "parkwide calendar" view request, captured from a live browser session
 // on 2026-09-04 against reserve.southcarolinaparks.com/devils-fork/camping/.
-// csrfToken and pwFromDate are overridden per request; everything else
-// mirrors the site's own defaults so the server accepts the POST.
-function buildFormBody(csrfToken: string, pwFromDate: string) {
+// csrfToken, parkid and pwFromDate are overridden per request; everything
+// else mirrors the site's own defaults so the server accepts the POST.
+function buildFormBody(csrfToken: string, parkId: string, pwFromDate: string) {
   return new URLSearchParams({
     token: "",
     csrfToken,
@@ -56,7 +52,7 @@ function buildFormBody(csrfToken: string, pwFromDate: string) {
     subTent: "false",
     electric: "",
     atlas_selection: "",
-    parkid: PARK_ID,
+    parkid: parkId,
     pwFromDate,
     parkwideFilters: "",
   });
@@ -64,7 +60,7 @@ function buildFormBody(csrfToken: string, pwFromDate: string) {
 
 function extractCsrfToken(html: string): string | null {
   const m = html.match(/name=["']csrfToken["'][^>]*\svalue=["']([^"']+)["']/i);
-return m ? m[1] : null;
+  return m ? m[1] : null;
 }
 
 function extractSessionCookie(setCookieHeaders: string[]): string {
@@ -86,16 +82,30 @@ function buildWindows(startISO: string, endISO: string): string[] {
 
 export type Slot = { site: string; date: string; price: string };
 
-async function fetchWindow(pwFromDate: string, cookie: string, csrfToken: string): Promise<Slot[]> {
-  const res = await fetch(BASE_URL, {
+// Best-effort "type" for a site name like "Tent Campsite T-14" -> "Tent
+// Campsite", or "RV Site 42" -> "RV Site". Strips a trailing site
+// identifier (letters/digits/hyphens) off the end of the name.
+export function siteType(site: string): string {
+  const stripped = site.replace(/\s+[A-Za-z]{0,3}-?\d+[A-Za-z0-9-]*$/, "").trim();
+  return stripped || site;
+}
+
+async function fetchWindow(
+  baseUrl: string,
+  parkId: string,
+  pwFromDate: string,
+  cookie: string,
+  csrfToken: string
+): Promise<Slot[]> {
+  const res = await fetch(baseUrl, {
     method: "POST",
     headers: {
       "content-type": "application/x-www-form-urlencoded",
       "user-agent": UA,
       cookie,
-      referer: BASE_URL,
+      referer: baseUrl,
     },
-    body: buildFormBody(csrfToken, pwFromDate),
+    body: buildFormBody(csrfToken, parkId, pwFromDate),
   });
 
   if (!res.ok) {
@@ -127,49 +137,18 @@ function withinRange(dateMMDDYYYY: string, startISO: string, endISO: string): bo
   return iso >= startISO && iso <= endISO;
 }
 
-async function notify(newSlots: Slot[]) {
-  if (!NTFY_URL) {
-    console.warn("NTFY_URL/NTFY_TOPIC not set — skipping notification. New slots:", newSlots);
-    return;
-  }
-  const byDate = new Map<string, string[]>();
-  for (const s of newSlots) {
-    const list = byDate.get(s.date) || [];
-    list.push(`${s.site} ($${s.price})`);
-    byDate.set(s.date, list);
-  }
-  const lines = [...byDate.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, sites]) => `${date}: ${sites.join(", ")}`);
+// Fetches every open night for `parkSlug` between startISO and endISO
+// (inclusive), regardless of any previously-seen state. Used both by the
+// watch/notify flow and by the on-demand availability search.
+export async function fetchAvailability(
+  parkSlug: string,
+  parkId: string,
+  startISO: string,
+  endISO: string
+): Promise<Slot[]> {
+  const baseUrl = baseUrlFor(parkSlug);
 
-  const body = lines.join("\n");
-  const title = `Devils Fork: ${newSlots.length} new opening${newSlots.length === 1 ? "" : "s"}`;
-
-  await fetch(NTFY_URL, {
-    method: "POST",
-    headers: {
-      title,
-      priority: "urgent",
-      tags: "tent,bell",
-      click: BASE_URL,
-    },
-    body,
-  });
-}
-
-export type CheckResult = {
-  checked: number;
-  new: number;
-  newSlots: Slot[];
-  windows: string[];
-};
-
-export async function runCheck(opts: { dryRun?: boolean } = {}): Promise<CheckResult> {
-  const store = getStore("campsite-watch");
-  const stateKey = `${PARK_SLUG}:${RANGE_START}:${RANGE_END}`;
-
-  // 1. Establish a session + fresh CSRF token.
-  const homeRes = await fetch(BASE_URL, { headers: { "user-agent": UA } });
+  const homeRes = await fetch(baseUrl, { headers: { "user-agent": UA } });
   const homeHtml = await homeRes.text();
   const csrfToken = extractCsrfToken(homeHtml);
   if (!csrfToken) {
@@ -178,21 +157,107 @@ export async function runCheck(opts: { dryRun?: boolean } = {}): Promise<CheckRe
   const setCookie = homeRes.headers.getSetCookie ? homeRes.headers.getSetCookie() : [];
   const cookie = extractSessionCookie(setCookie);
 
-  // 2. Pull every 2-week window covering the target range, in parallel —
-  // scheduled functions have a 30-second execution limit, and these
-  // requests are independent once we have a cookie + csrfToken.
-  const windows = buildWindows(RANGE_START, RANGE_END);
-  const windowResults = await Promise.allSettled(windows.map((w) => fetchWindow(w, cookie, csrfToken)));
+  const windows = buildWindows(startISO, endISO);
+  const windowResults = await Promise.allSettled(
+    windows.map((w) => fetchWindow(baseUrl, parkId, w, cookie, csrfToken))
+  );
   const allSlots: Slot[] = [];
   windowResults.forEach((result, i) => {
     if (result.status === "fulfilled") {
-      allSlots.push(...result.value.filter((s) => withinRange(s.date, RANGE_START, RANGE_END)));
+      allSlots.push(...result.value.filter((s) => withinRange(s.date, startISO, endISO)));
     } else {
       console.error(`Window ${windows[i]} failed:`, result.reason);
     }
   });
 
-  // 3. Dedup + diff against last-known state.
+  return allSlots;
+}
+
+// Formats slots the way Joe wants to read them: one line per date, e.g.
+// "10/14/2026: Tent Campsite T-3 ($23), RV Site 12 ($31)".
+export function formatSlotLines(slots: Slot[]): string[] {
+  const byDate = new Map<string, string[]>();
+  for (const s of slots) {
+    const list = byDate.get(s.date) || [];
+    list.push(s.price ? `${s.site} ($${s.price})` : s.site);
+    byDate.set(s.date, list);
+  }
+  return [...byDate.entries()]
+    .sort(([a], [b]) => {
+      const [am, ad, ay] = a.split("/").map(Number);
+      const [bm, bd, by] = b.split("/").map(Number);
+      return ay - by || am - bm || ad - bd;
+    })
+    .map(([date, sites]) => `${date}: ${sites.join(", ")}`);
+}
+
+const NTFY_URL_BASE = "https://ntfy.sh";
+
+async function sendNtfy(topic: string, title: string, body: string, priority = "urgent") {
+  await fetch(`${NTFY_URL_BASE}/${topic}`, {
+    method: "POST",
+    headers: {
+      title,
+      priority,
+      tags: "tent,bell",
+    },
+    body,
+  });
+}
+
+async function logNotification(entry: {
+  watchId: string;
+  parkSlug: string;
+  parkName: string;
+  rangeStart: string;
+  rangeEnd: string;
+  newCount: number;
+  lines: string[];
+}) {
+  try {
+    const store = getStore("campsite-watch-notifications");
+    const key = `${Date.now()}-${entry.watchId}`;
+    await store.setJSON(key, { ...entry, sentAt: new Date().toISOString() });
+  } catch (err) {
+    console.error("Failed to log notification:", err);
+  }
+}
+
+export type Watch = {
+  id: string;
+  parkSlug: string;
+  parkName: string;
+  rangeStart: string; // YYYY-MM-DD
+  rangeEnd: string; // YYYY-MM-DD, inclusive
+  ntfyTopic: string;
+  createdAt: string;
+};
+
+export type WatchCheckResult = {
+  watchId: string;
+  checked: number;
+  new: number;
+  newSlots: Slot[];
+};
+
+// Checks one watch's park/date-range against its last-known state (keyed
+// by park+range so re-creating the same watch doesn't re-fire), notifies
+// on genuinely new openings, and logs what was sent.
+export async function runWatchCheck(
+  watch: Watch,
+  opts: { dryRun?: boolean } = {}
+): Promise<WatchCheckResult> {
+  const park = findPark(watch.parkSlug);
+  const parkId = park?.parkId;
+  if (!parkId) {
+    throw new Error(`Unknown park slug: ${watch.parkSlug}`);
+  }
+
+  const store = getStore("campsite-watch");
+  const stateKey = `${watch.parkSlug}:${watch.rangeStart}:${watch.rangeEnd}`;
+
+  const allSlots = await fetchAvailability(watch.parkSlug, parkId, watch.rangeStart, watch.rangeEnd);
+
   const currentKeys = new Set(allSlots.map((s) => `${s.site}|${s.date}`));
   const previous = (await store.get(stateKey, { type: "json" })) as string[] | null;
   const previousKeys = new Set(previous || []);
@@ -200,18 +265,36 @@ export async function runCheck(opts: { dryRun?: boolean } = {}): Promise<CheckRe
   const newSlots = allSlots.filter((s) => !previousKeys.has(`${s.site}|${s.date}`));
 
   console.log(
-    `Checked ${windows.length} window(s), ${allSlots.length} available night(s) total, ${newSlots.length} new since last run.`
+    `[${watch.parkSlug}] checked ${allSlots.length} open night(s), ${newSlots.length} new since last run.`
   );
 
   if (newSlots.length > 0 && !opts.dryRun) {
-    await notify(newSlots);
+    const lines = formatSlotLines(newSlots);
+    const title = `${watch.parkName}: ${newSlots.length} new opening${newSlots.length === 1 ? "" : "s"}`;
+    await sendNtfy(watch.ntfyTopic, title, lines.join("\n"));
+    await logNotification({
+      watchId: watch.id,
+      parkSlug: watch.parkSlug,
+      parkName: watch.parkName,
+      rangeStart: watch.rangeStart,
+      rangeEnd: watch.rangeEnd,
+      newCount: newSlots.length,
+      lines,
+    });
   }
 
-  // 4. Persist current state for next run (skip on dry run so testing
-  // doesn't clobber the real baseline).
   if (!opts.dryRun) {
     await store.setJSON(stateKey, [...currentKeys]);
   }
 
-  return { checked: allSlots.length, new: newSlots.length, newSlots, windows };
+  return { watchId: watch.id, checked: allSlots.length, new: newSlots.length, newSlots };
+}
+
+export async function sendTestNotification(topic: string) {
+  await sendNtfy(
+    topic,
+    "Campsite Watch - test",
+    "If you got this, your campsite-watch notifications are wired up correctly.",
+    "default"
+  );
 }
