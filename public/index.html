@@ -112,7 +112,7 @@
 
   <section>
     <h2>Check availability now</h2>
-    <p class="sub" style="margin-bottom:1rem;">Live search — doesn't affect any watch or send a notification.</p>
+    <p class="sub" style="margin-bottom:1rem;">Live search — doesn't affect any watch or send a notification. Results only include dates that can start a 2-night stay; for Devils Fork, only the lakefront sites (34, 35, 37, 39, 40, 41) are shown.</p>
     <div class="row">
       <div>
         <label for="searchPark">Park</label>
@@ -170,6 +170,11 @@ async function loadParks() {
     .join("");
   document.getElementById("parkSelect").innerHTML = opts;
   document.getElementById("searchPark").innerHTML = opts;
+  // Devils Fork is the current focus — default both pickers to it.
+  if (parks.some((p) => p.slug === "devils-fork")) {
+    document.getElementById("parkSelect").value = "devils-fork";
+    document.getElementById("searchPark").value = "devils-fork";
+  }
 }
 
 async function loadWatches() {
