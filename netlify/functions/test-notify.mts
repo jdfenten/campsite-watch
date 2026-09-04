@@ -1,23 +1,12 @@
-// Hit this once to confirm your ntfy topic is wired up correctly:
-//   https://<your-site>.netlify.app/.netlify/functions/test-notify
-declare const Netlify: { env: { get(key: string): string | undefined } };
+import { sendTestNotification } from "./lib/checker.mts";
 
-export default async () => {
-  const NTFY_TOPIC = Netlify.env.get("NTFY_TOPIC");
-  const NTFY_URL = Netlify.env.get("NTFY_URL") || (NTFY_TOPIC ? `https://ntfy.sh/${NTFY_TOPIC}` : undefined);
-
-  if (!NTFY_URL) {
-    return new Response(
-      "NTFY_TOPIC (or NTFY_URL) env var is not set on this site. Set it in Netlify site settings, then retry.",
-      { status: 500 }
-    );
+// Hit this to confirm an ntfy topic is wired up correctly:
+//   https://<your-site>.netlify.app/.netlify/functions/test-notify?topic=<topic>
+export default async (req: Request) => {
+  const topic = new URL(req.url).searchParams.get("topic");
+  if (!topic) {
+    return new Response("Add ?topic=<your-ntfy-topic> to the URL and retry.", { status: 400 });
   }
-
-  await fetch(NTFY_URL, {
-    method: "POST",
-    headers: { title: "Campsite Watch - test", priority: "default", tags: "white_check_mark" },
-body: "If you got this, your campsite-watch notifications are wired up correctly.",
-  });
-
-  return new Response(`Sent a test notification to ${NTFY_URL}`);
+  await sendTestNotification(topic);
+  return new Response(`Sent a test notification to https://ntfy.sh/${topic}`);
 };
